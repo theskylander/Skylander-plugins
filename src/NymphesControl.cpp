@@ -34,6 +34,17 @@ struct CCMidiOutput : midi::Output {
 		m.setValue(value);
 		sendMessage(m);
 	}
+
+	void sendProgram(uint8_t program) {
+		// setProgram(program);
+		midi::Message m;
+		m.setStatus(0xC);
+		m.setNote(program);
+		m.setValue(0x0);
+		sendMessage(m);
+	}
+  
+  
 };
 
 
@@ -51,10 +62,15 @@ struct NymphesControl : Module {
 		LOAD,
 		SAVE,
 		ENUMS(MOD_TYPE, 4),
+		PROGRAM_BANK,
+		PROGRAM_KNOB,
+		PROGRAM_SEND,
 		NUM_PARAMS
 	};
 	enum InputIds {
 		ENUMS(CC_INPUTS, 74),
+		CV_PC,
+		CV_PC_SEND,
 		NUM_INPUTS
 	};
 	enum OutputIds {
@@ -70,12 +86,12 @@ struct NymphesControl : Module {
 		SUSTAIN_LIGHT,
 		LEGATO_LIGHT,
 		ENUMS(PLAYMODE_LIGHTS, 6),
+		ENUMS(PC_BANK_LIGHTS,2),
 		NUM_LIGHTS
 	};
 
 	midi::InputQueue midiInput;
 	int8_t values_in[128];
-	int learningId;
 	int learnedCcs[82];
 	dsp::ExponentialFilter valueFilters[38];
 	dsp::ExponentialFilter button_valueFilters[8];
@@ -110,6 +126,9 @@ struct NymphesControl : Module {
         std::string NYM_FILTERS_load = "Nymphes Patch file load (.nym):nym";
         std::string NYM_FILTERS_save = "Nymphes Patch file save (.nym):nym";
 
+        int target_program;
+        char current_bank;
+        int current_program;
         int current_values[38];
         int mod_current_values[4][36];
         int mod_display_values[36];
@@ -120,6 +139,12 @@ struct NymphesControl : Module {
         int slow_control = 20;
 
         bool button_pressed = false;
+
+        bool factory;
+        bool factory_last;
+        int pc_bank_last = 0;
+        int program_change_last = 0;
+        dsp::SchmittTrigger sendPCTrigger;
   
 	NymphesControl() {
 		config(NUM_PARAMS, NUM_INPUTS, NUM_OUTPUTS, NUM_LIGHTS);
@@ -151,6 +176,11 @@ struct NymphesControl : Module {
 		configParam(NymphesControl::PLAYMODE, 0, 5, 0, "");		
 		configParam(NymphesControl::LOAD, 0.0, 1.0, 0.0, "");
 		configParam(NymphesControl::SAVE, 0.0, 1.0, 0.0, "");
+
+		configParam(NymphesControl::PROGRAM_BANK, 0.0, 1.0, 0.0, "");
+		configParam(NymphesControl::PROGRAM_KNOB, 0.0, 48.0, 0.0, "");
+		configParam(NymphesControl::PROGRAM_SEND, 0.0, 1.0, 0.0, "");
+		
 		onReset();
 	}
 
@@ -159,8 +189,13 @@ struct NymphesControl : Module {
   
 	void onReset() override {
 		for (int i = 0; i < 128; i++) {
-			values_in[i] = 0;
+			values_in[i] = -10;
 		}
+		current_program = 0x00;
+		target_program = 0x00;
+		current_bank = '0';
+		factory = false;
+		factory_last = false;
 		for (int i = 0; i < 38; i++) {
 			current_values[i] = 0;
 			valueFilters_last[i] = -10;
@@ -207,7 +242,6 @@ struct NymphesControl : Module {
 			// learnedCcs[i] = i;
 			learnedCcs[i] = nymphes_cc_map[i];
 		}
-		learningId = -1;
 		mod_src = 0;
 		mod_src_last = 4;
 		midiInput.reset();
@@ -532,6 +566,75 @@ struct NymphesControl : Module {
 		}		
 
 		//------
+
+		if(inputs[CV_PC].isConnected()) {
+		  float inputValue = clamp(inputs[CV_PC].getVoltage(), 0.f, 10.f);
+		  target_program = (uint8_t) rescale(inputValue, 0.f, 10.f, 0.f, 127.f);
+		  if(target_program > 48) {
+		    target_program -= 48;
+		    if(target_program > 48) target_program = 48;
+		    factory = true;
+		  } else {
+		    factory = false;
+		  }		  
+		}
+		else {
+		  target_program = (uint8_t) params[PROGRAM_KNOB].getValue();
+		}
+		
+		if (((params[PROGRAM_BANK].getValue() != pc_bank_last) && (pc_bank_last == 0.0)))
+		  {
+		    factory = !factory;	
+		  }
+
+		if (factory_last != factory) {
+		  factory_last = factory;
+		  if(factory) {
+		    midiOutput.setValue(1, 0);
+		    midiOutput.setValue(0, 32);
+		  } else {
+		    midiOutput.setValue(0, 0);
+		    midiOutput.setValue(0, 32);
+		  }
+		}
+		
+		if (values_in[0] == 1 && values_in[32] == 0) {
+		  factory = true;
+		  values_in[0] = -10;
+		  values_in[32] = -10;
+		} else if (values_in[0] == 0 && values_in[32] == 0) {
+		  factory = false;
+		  values_in[0] = -10;
+		  values_in[32] = -10;
+		}
+		
+		if (factory) {
+		  lights[PC_BANK_LIGHTS].value = 0.0;
+		  lights[PC_BANK_LIGHTS+1].value = 1.0;
+		} else {
+		  lights[PC_BANK_LIGHTS].value = 1.0;
+		  lights[PC_BANK_LIGHTS+1].value = 0.0;
+		}
+		
+		// pc_bank_last[0] = inputs[CV_DIRECTION].getVoltage();
+		pc_bank_last = params[PROGRAM_BANK].getValue();
+		
+
+		current_program = target_program%7 + 1;
+		if(target_program/7 == 0) current_bank = 'A';
+		if(target_program/7 == 1) current_bank = 'B';
+		if(target_program/7 == 2) current_bank = 'C';
+		if(target_program/7 == 3) current_bank = 'D';
+		if(target_program/7 == 4) current_bank = 'E';
+		if(target_program/7 == 5) current_bank = 'F';
+		if(target_program/7 == 6) current_bank = 'G';
+
+		if(sendPCTrigger.process(fmax(params[PROGRAM_SEND].getValue(), inputs[CV_PC_SEND].getVoltage()))) {
+		  midiOutput.sendProgram(target_program);
+		}
+
+		//--------
+
 		
 
 		if ((params[LOAD].getValue() != load_last_value) && (load_last_value == 0.0)) {
@@ -724,6 +827,9 @@ struct NymphesControl : Module {
 			case 0xb: {
 				processCC(msg);
 			} break;
+		        case 0xc: {
+ 			        processPC(msg);
+			} break;
 			default: break;
 		}
 	}
@@ -736,11 +842,17 @@ struct NymphesControl : Module {
 		int8_t value_in = msg.bytes[2];
 		value_in = clamp(value_in, -127, 127);
 		// Learn
-		if (learningId >= 0 && values_in[cc] != value_in) {
-			learnedCcs[learningId] = cc;
-			learningId = -1;
-		}
 		values_in[cc] = value_in;
+	}
+
+	void processPC(midi::Message msg) {
+	        uint8_t program = msg.getNote();
+		setProgram(program);
+	}
+
+	void setProgram(uint8_t program) {
+		// current_program = program;
+		params[PROGRAM_KNOB].setValue(program);
 	}
 
 	json_t* dataToJson() override {
@@ -846,127 +958,189 @@ struct VerySmallDisplayWidget : TransparentWidget {
 };
 ////////////////////////////////////
 
+////////////////////////////////////
+struct DisplayWidget : TransparentWidget {
+  int *value = NULL;
+  char *bank = NULL;
+  std::shared_ptr<Font> font;
+
+  DisplayWidget() {
+    font = APP->window->loadFont(asset::plugin(pluginInstance, "res/Segment7Standard.ttf"));
+  };
+
+  void draw(const DrawArgs& args) override
+  {
+    if (!value) {
+      return;
+    }
+    // Background
+    //NVGcolor backgroundColor = nvgRGB(0x20, 0x20, 0x20);
+    NVGcolor backgroundColor = nvgRGB(0x20, 0x10, 0x10);
+    NVGcolor borderColor = nvgRGB(0x10, 0x10, 0x10);
+    nvgBeginPath(args.vg);
+    nvgRoundedRect(args.vg, 0.0, 0.0, box.size.x, box.size.y, 2.0);
+    nvgFillColor(args.vg, backgroundColor);
+    nvgFill(args.vg);
+    nvgStrokeWidth(args.vg, 1.0);
+    nvgStrokeColor(args.vg, borderColor);
+    nvgStroke(args.vg);    
+    // text 
+    nvgFontSize(args.vg, 11);
+    nvgFontFaceId(args.vg, font->handle);
+    // nvgTextLetterSpacing(args.vg, 1.1111);
+    nvgTextLetterSpacing(args.vg, 1);
+
+    std::stringstream to_display;   
+    to_display << *bank << std::setw(2) << *value;
+
+    Vec textPos = Vec(0.7857f, 9.99523f); 
+
+    NVGcolor textColor = nvgRGB(0xdf, 0xd2, 0x2c);
+    nvgFillColor(args.vg, nvgTransRGBA(textColor, 16));
+    nvgText(args.vg, textPos.x, textPos.y, "~~~", NULL);
+
+    textColor = nvgRGB(0xda, 0xe9, 0x29);
+    nvgFillColor(args.vg, nvgTransRGBA(textColor, 16));
+    nvgText(args.vg, textPos.x, textPos.y, "\\\\\\", NULL);
+
+    textColor = nvgRGB(0xf0, 0x00, 0x00);
+    nvgFillColor(args.vg, textColor);
+    nvgText(args.vg, textPos.x, textPos.y, to_display.str().c_str(), NULL);
+  }
+};
+////////////////////////////////////
+
 
 struct NymphesControlWidget : ModuleWidget {
-	NymphesControlWidget(NymphesControl* module) {
-		setModule(module);
-		setPanel(APP->window->loadSvg(asset::plugin(pluginInstance, "res/NymphesControl.svg")));
-		// setPanel(APP->window->loadSvg(asset::plugin(pluginInstance, "res/nymphes-top-W.svg")));
+  NymphesControlWidget(NymphesControl* module) {
+    setModule(module);
+    setPanel(APP->window->loadSvg(asset::plugin(pluginInstance, "res/NymphesControl.svg")));
+    // setPanel(APP->window->loadSvg(asset::plugin(pluginInstance, "res/nymphes-top-W.svg")));
+    
+    addChild(createWidget<ScrewSilver>(Vec(RACK_GRID_WIDTH, 0)));
+    addChild(createWidget<ScrewSilver>(Vec(box.size.x - 2 * RACK_GRID_WIDTH, 0)));
+    addChild(createWidget<ScrewSilver>(Vec(RACK_GRID_WIDTH, RACK_GRID_HEIGHT - RACK_GRID_WIDTH)));
+    addChild(createWidget<ScrewSilver>(Vec(box.size.x - 2 * RACK_GRID_WIDTH, RACK_GRID_HEIGHT - RACK_GRID_WIDTH)));
+    
+    typedef Grid2MidiWidget<CcChoice<NymphesControl>> TMidiWidget;
+    TMidiWidget* midiWidget = createWidget<TMidiWidget>(mm2px(Vec(3.399621, 11.337339)));
+    midiWidget->box.size = mm2px(Vec(40, 27.667)); // 44->68
+    midiWidget->setMidiPort(module ? &module->midiInput : NULL);
+    // midiWidget->setModule(module);
+    addChild(midiWidget);
+    
+    typedef Grid2MidiWidget<CcChoice<NymphesControl>> TMidiWidget2;
+    // TMidiWidget2* midiWidget2 = createWidget<TMidiWidget2>(mm2px(Vec(87.399621, 14.837339)));
+    TMidiWidget2* midiWidget2 = createWidget<TMidiWidget2>(mm2px(Vec(3.399621, 40.837339)));
+    midiWidget2->box.size = mm2px(Vec(40, 27.667));
+    midiWidget2->setMidiPort(module ? &module->midiOutput : NULL);
+    addChild(midiWidget2);
+    
+    //Red, Green, Yellow, Blue, White - componentlibrary.hpp
+    
+    float slider_x[14] = {179.628, 185.508, 190.947, 196.610, 202.324, 212.956, 218.500, 224.200, 234.887, 240.370, 246.114, 251.808, 262.310, 267.731};
+    for (int i = 0; i < 14; i++) {
+      addParam(createLightParam<LEDLightSliderFixed<YellowLight>>(mm2px(Vec(slider_x[i]-0.9-4.588-120, 30.73149 - 3.516).plus(Vec(-2, 0))), module, NymphesControl::CONTROLLERS + i, NymphesControl::CTRL_LIGHTS + i));
+      addParam(createLightParam<LEDLightSliderFixed<BlueLight>>(mm2px(Vec(slider_x[i]-0.9-4.588-120, 94.18849).plus(Vec(-2, 0))), module, NymphesControl::CONTROLLERS + i+14, NymphesControl::CTRL_LIGHTS + i + 14));
+      
+      addInput(createInputCentered<PJ301MPort>(mm2px(Vec(slider_x[i]+0.5-4.588-120, 65 + (i%2)*6 - 1.616)), module, NymphesControl::CC_INPUTS + i));
+      addInput(createInputCentered<PJ301MPort>(mm2px(Vec(slider_x[i]+0.5-4.588-120, 79 + (i%2)*6)), module, NymphesControl::CC_INPUTS + i + 14));		  
+    }
+    for (int i = 28; i < 42; i++) {
+      //123.709
+      addParam(createLightParam<LEDLightSliderFixed<RedLight>>(mm2px(Vec(3.709+slider_x[i-28]-0.9-4.588, 30.73149 - 3.516).plus(Vec(-2, 0))), module, NymphesControl::CONTROLLERS + i, NymphesControl::CTRL_LIGHTS + i));
+      addParam(createLightParam<LEDLightSliderFixed<RedLight>>(mm2px(Vec(3.709+slider_x[i-28]-0.9-4.588, 94.18849).plus(Vec(-2, 0))), module, NymphesControl::CONTROLLERS + i+14, NymphesControl::CTRL_LIGHTS + i + 14));
+      
+      addInput(createInputCentered<PJ301MPort>(mm2px(Vec(3.709+slider_x[i-28]+0.5-4.588, 65 + (i%2)*6 - 1.616)), module, NymphesControl::CC_INPUTS + i));
+      addInput(createInputCentered<PJ301MPort>(mm2px(Vec(3.709+slider_x[i-28]+0.5-4.588, 79 + (i%2)*6)), module, NymphesControl::CC_INPUTS + i + 14));		  
+    }
+    
+    
+    // reverb
+    for (int i = 56; i < 60; i++) {
+      addParam(createLightParam<LEDLightSliderFixed<WhiteLight>>(mm2px(Vec(85.351+6*i-0.9-120, 30.73149 - 3.516).plus(Vec(-2, 0))), module, NymphesControl::CONTROLLERS + i, NymphesControl::CTRL_LIGHTS + i));
+      addInput(createInputCentered<PJ301MPort>(mm2px(Vec(85.351+6*i+0.5-120, 65 + (i%2)*6 - 1.616)), module, NymphesControl::CC_INPUTS + i));
+    }
+    // reverb mod
+    for (int i = 60; i < 64; i++) {
+      addParam(createLightParam<LEDLightSliderFixed<RedLight>>(mm2px(Vec(85.351+6*i-0.9-120, 30.73149 - 3.516).plus(Vec(-2, 0))), module, NymphesControl::CONTROLLERS + i, NymphesControl::CTRL_LIGHTS + i));
+      addInput(createInputCentered<PJ301MPort>(mm2px(Vec(85.351+6*i+0.5-120, 65 + (i%2)*6 - 1.616)), module, NymphesControl::CC_INPUTS + i));
+    }
+    // lfo2 control
+    for (int i = 64; i < 68; i++) {
+      addParam(createLightParam<LEDLightSliderFixed<GreenLight>>(mm2px(Vec(85.351+6*i-0.9-120, 30.73149 - 3.516).plus(Vec(-2, 0))), module, NymphesControl::CONTROLLERS + i, NymphesControl::CTRL_LIGHTS + i));
+      addInput(createInputCentered<PJ301MPort>(mm2px(Vec(85.351+6*i+0.5-120, 65 + (i%2)*6 - 1.616)), module, NymphesControl::CC_INPUTS + i));
+    }
+    // lfo2 mod
+    for (int i = 68; i < 72; i++) {
+      addParam(createLightParam<LEDLightSliderFixed<RedLight>>(mm2px(Vec(85.351+6*i-0.9-120, 30.73149 - 3.516).plus(Vec(-2, 0))), module, NymphesControl::CONTROLLERS + i, NymphesControl::CTRL_LIGHTS + i));
+      addInput(createInputCentered<PJ301MPort>(mm2px(Vec(85.351+6*i+0.5-120, 65 + (i%2)*6 - 1.616)), module, NymphesControl::CC_INPUTS + i));
+    }
+    for (int i = 72; i < 73; i++) {
+      addParam(createLightParam<LEDLightSliderFixed<BlueLight>>(mm2px(Vec(85.351+6*i-0.9-120, 30.73149 - 3.516).plus(Vec(-2, 0))), module, NymphesControl::CONTROLLERS + i, NymphesControl::CTRL_LIGHTS + i));
+      addInput(createInputCentered<PJ301MPort>(mm2px(Vec(85.351+6*i+0.5-120, 65 + (i%2)*6 - 1.616)), module, NymphesControl::CC_INPUTS + i));
+    }
+    for (int i = 73; i < 74; i++) {
+      addParam(createLightParam<LEDLightSliderFixed<YellowLight>>(mm2px(Vec(85.351+6*i-0.9-120, 30.73149 - 3.516).plus(Vec(-2, 0))), module, NymphesControl::CONTROLLERS + i, NymphesControl::CTRL_LIGHTS + i));
+      addInput(createInputCentered<PJ301MPort>(mm2px(Vec(85.351+6*i+0.5-120, 65 + (i%2)*6 - 1.616)), module, NymphesControl::CC_INPUTS + i));
+    }
+    
+    // addParam(createParam<SonusBigSnapKnob>(mm2px(Vec(420,106)), module, NymphesControl::LFO_CTRL));
+    float extra_shift = 5.5;
+    addParam(createParam<CKD6>(mm2px(Vec(300.6+10.5+extra_shift,104.5)), module, NymphesControl::LFO1_TYPE));
+    addChild(createLight<SmallLight<BlueLight>>(mm2px(Vec(299.1+11+extra_shift, 101)), module, NymphesControl::LFO1_TYPE_LIGHTS));
+    addChild(createLight<SmallLight<BlueLight>>(mm2px(Vec(302.1+11+extra_shift, 101)), module, NymphesControl::LFO1_TYPE_LIGHTS + 1));
+    addChild(createLight<SmallLight<BlueLight>>(mm2px(Vec(305.1+11+extra_shift, 101)), module, NymphesControl::LFO1_TYPE_LIGHTS + 2));
+    addChild(createLight<SmallLight<BlueLight>>(mm2px(Vec(308.1+11+extra_shift, 101)), module, NymphesControl::LFO1_TYPE_LIGHTS + 3));
+    addParam(createParam<CKD6>(mm2px(Vec(312.6+10.5+extra_shift,104.5)), module, NymphesControl::LFO1_SYNC));
+    addChild(createLight<SmallLight<BlueLight>>(mm2px(Vec(315.6+11+extra_shift, 101)), module, NymphesControl::LFO1_SYNC_LIGHT));
 
-		addChild(createWidget<ScrewSilver>(Vec(RACK_GRID_WIDTH, 0)));
-		addChild(createWidget<ScrewSilver>(Vec(box.size.x - 2 * RACK_GRID_WIDTH, 0)));
-		addChild(createWidget<ScrewSilver>(Vec(RACK_GRID_WIDTH, RACK_GRID_HEIGHT - RACK_GRID_WIDTH)));
-		addChild(createWidget<ScrewSilver>(Vec(box.size.x - 2 * RACK_GRID_WIDTH, RACK_GRID_HEIGHT - RACK_GRID_WIDTH)));
-
-		typedef Grid2MidiWidget<CcChoice<NymphesControl>> TMidiWidget;
-		TMidiWidget* midiWidget = createWidget<TMidiWidget>(mm2px(Vec(3.399621, 21.837339)));
-		midiWidget->box.size = mm2px(Vec(40, 27.667)); // 44->68
-		midiWidget->setMidiPort(module ? &module->midiInput : NULL);
-		// midiWidget->setModule(module);
-		addChild(midiWidget);
-
-		typedef Grid2MidiWidget<CcChoice<NymphesControl>> TMidiWidget2;
-		// TMidiWidget2* midiWidget2 = createWidget<TMidiWidget2>(mm2px(Vec(87.399621, 14.837339)));
-		TMidiWidget2* midiWidget2 = createWidget<TMidiWidget2>(mm2px(Vec(3.399621, 56.837339)));
-		midiWidget2->box.size = mm2px(Vec(40, 27.667));
-		midiWidget2->setMidiPort(module ? &module->midiOutput : NULL);
-		addChild(midiWidget2);
-
-		//Red, Green, Yellow, Blue, White - componentlibrary.hpp
-		
-		float slider_x[14] = {179.628, 185.508, 190.947, 196.610, 202.324, 212.956, 218.500, 224.200, 234.887, 240.370, 246.114, 251.808, 262.310, 267.731};
-		for (int i = 0; i < 14; i++) {
-		  addParam(createLightParam<LEDLightSliderFixed<YellowLight>>(mm2px(Vec(slider_x[i]-0.9-4.588-120, 30.73149 - 3.516).plus(Vec(-2, 0))), module, NymphesControl::CONTROLLERS + i, NymphesControl::CTRL_LIGHTS + i));
-		  addParam(createLightParam<LEDLightSliderFixed<BlueLight>>(mm2px(Vec(slider_x[i]-0.9-4.588-120, 94.18849).plus(Vec(-2, 0))), module, NymphesControl::CONTROLLERS + i+14, NymphesControl::CTRL_LIGHTS + i + 14));
-
-		  addInput(createInputCentered<PJ301MPort>(mm2px(Vec(slider_x[i]+0.5-4.588-120, 65 + (i%2)*6 - 1.616)), module, NymphesControl::CC_INPUTS + i));
-		  addInput(createInputCentered<PJ301MPort>(mm2px(Vec(slider_x[i]+0.5-4.588-120, 79 + (i%2)*6)), module, NymphesControl::CC_INPUTS + i + 14));		  
-		}
-		for (int i = 28; i < 42; i++) {
-		  //123.709
-		  addParam(createLightParam<LEDLightSliderFixed<RedLight>>(mm2px(Vec(3.709+slider_x[i-28]-0.9-4.588, 30.73149 - 3.516).plus(Vec(-2, 0))), module, NymphesControl::CONTROLLERS + i, NymphesControl::CTRL_LIGHTS + i));
-		  addParam(createLightParam<LEDLightSliderFixed<RedLight>>(mm2px(Vec(3.709+slider_x[i-28]-0.9-4.588, 94.18849).plus(Vec(-2, 0))), module, NymphesControl::CONTROLLERS + i+14, NymphesControl::CTRL_LIGHTS + i + 14));
-
-		  addInput(createInputCentered<PJ301MPort>(mm2px(Vec(3.709+slider_x[i-28]+0.5-4.588, 65 + (i%2)*6 - 1.616)), module, NymphesControl::CC_INPUTS + i));
-		  addInput(createInputCentered<PJ301MPort>(mm2px(Vec(3.709+slider_x[i-28]+0.5-4.588, 79 + (i%2)*6)), module, NymphesControl::CC_INPUTS + i + 14));		  
-		}
-
-
-		// reverb
-		for (int i = 56; i < 60; i++) {
-		  addParam(createLightParam<LEDLightSliderFixed<WhiteLight>>(mm2px(Vec(85.351+6*i-0.9-120, 30.73149 - 3.516).plus(Vec(-2, 0))), module, NymphesControl::CONTROLLERS + i, NymphesControl::CTRL_LIGHTS + i));
-		  addInput(createInputCentered<PJ301MPort>(mm2px(Vec(85.351+6*i+0.5-120, 65 + (i%2)*6 - 1.616)), module, NymphesControl::CC_INPUTS + i));
-		}
-		// reverb mod
-		for (int i = 60; i < 64; i++) {
-		  addParam(createLightParam<LEDLightSliderFixed<RedLight>>(mm2px(Vec(85.351+6*i-0.9-120, 30.73149 - 3.516).plus(Vec(-2, 0))), module, NymphesControl::CONTROLLERS + i, NymphesControl::CTRL_LIGHTS + i));
-		  addInput(createInputCentered<PJ301MPort>(mm2px(Vec(85.351+6*i+0.5-120, 65 + (i%2)*6 - 1.616)), module, NymphesControl::CC_INPUTS + i));
-		}
-		// lfo2 control
-		for (int i = 64; i < 68; i++) {
-		  addParam(createLightParam<LEDLightSliderFixed<GreenLight>>(mm2px(Vec(85.351+6*i-0.9-120, 30.73149 - 3.516).plus(Vec(-2, 0))), module, NymphesControl::CONTROLLERS + i, NymphesControl::CTRL_LIGHTS + i));
-		  addInput(createInputCentered<PJ301MPort>(mm2px(Vec(85.351+6*i+0.5-120, 65 + (i%2)*6 - 1.616)), module, NymphesControl::CC_INPUTS + i));
-		}
-		// lfo2 mod
-		for (int i = 68; i < 72; i++) {
-		  addParam(createLightParam<LEDLightSliderFixed<RedLight>>(mm2px(Vec(85.351+6*i-0.9-120, 30.73149 - 3.516).plus(Vec(-2, 0))), module, NymphesControl::CONTROLLERS + i, NymphesControl::CTRL_LIGHTS + i));
-		  addInput(createInputCentered<PJ301MPort>(mm2px(Vec(85.351+6*i+0.5-120, 65 + (i%2)*6 - 1.616)), module, NymphesControl::CC_INPUTS + i));
-		}
-		for (int i = 72; i < 73; i++) {
-		  addParam(createLightParam<LEDLightSliderFixed<BlueLight>>(mm2px(Vec(85.351+6*i-0.9-120, 30.73149 - 3.516).plus(Vec(-2, 0))), module, NymphesControl::CONTROLLERS + i, NymphesControl::CTRL_LIGHTS + i));
-		  addInput(createInputCentered<PJ301MPort>(mm2px(Vec(85.351+6*i+0.5-120, 65 + (i%2)*6 - 1.616)), module, NymphesControl::CC_INPUTS + i));
-		}
-		for (int i = 73; i < 74; i++) {
-		  addParam(createLightParam<LEDLightSliderFixed<YellowLight>>(mm2px(Vec(85.351+6*i-0.9-120, 30.73149 - 3.516).plus(Vec(-2, 0))), module, NymphesControl::CONTROLLERS + i, NymphesControl::CTRL_LIGHTS + i));
-		  addInput(createInputCentered<PJ301MPort>(mm2px(Vec(85.351+6*i+0.5-120, 65 + (i%2)*6 - 1.616)), module, NymphesControl::CC_INPUTS + i));
-		}
-
-		// addParam(createParam<SonusBigSnapKnob>(mm2px(Vec(420,106)), module, NymphesControl::LFO_CTRL));
-		float extra_shift = 5.5;
-		addParam(createParam<CKD6>(mm2px(Vec(300.6+10.5+extra_shift,104.5)), module, NymphesControl::LFO1_TYPE));
-		addChild(createLight<SmallLight<BlueLight>>(mm2px(Vec(299.1+11+extra_shift, 101)), module, NymphesControl::LFO1_TYPE_LIGHTS));
-		addChild(createLight<SmallLight<BlueLight>>(mm2px(Vec(302.1+11+extra_shift, 101)), module, NymphesControl::LFO1_TYPE_LIGHTS + 1));
-		addChild(createLight<SmallLight<BlueLight>>(mm2px(Vec(305.1+11+extra_shift, 101)), module, NymphesControl::LFO1_TYPE_LIGHTS + 2));
-		addChild(createLight<SmallLight<BlueLight>>(mm2px(Vec(308.1+11+extra_shift, 101)), module, NymphesControl::LFO1_TYPE_LIGHTS + 3));
-		addParam(createParam<CKD6>(mm2px(Vec(312.6+10.5+extra_shift,104.5)), module, NymphesControl::LFO1_SYNC));
-		addChild(createLight<SmallLight<BlueLight>>(mm2px(Vec(315.6+11+extra_shift, 101)), module, NymphesControl::LFO1_SYNC_LIGHT));
-
-		addParam(createParam<CKD6>(mm2px(Vec(324.6+10.5+extra_shift,104.5)), module, NymphesControl::LFO2_TYPE));
-		addChild(createLight<SmallLight<BlueLight>>(mm2px(Vec(323.1+11+extra_shift, 101)), module, NymphesControl::LFO2_TYPE_LIGHTS));
-		addChild(createLight<SmallLight<BlueLight>>(mm2px(Vec(326.1+11+extra_shift, 101)), module, NymphesControl::LFO2_TYPE_LIGHTS + 1));
-		addChild(createLight<SmallLight<BlueLight>>(mm2px(Vec(329.1+11+extra_shift, 101)), module, NymphesControl::LFO2_TYPE_LIGHTS + 2));
-		addChild(createLight<SmallLight<BlueLight>>(mm2px(Vec(332.1+11+extra_shift, 101)), module, NymphesControl::LFO2_TYPE_LIGHTS + 3));
-		addParam(createParam<CKD6>(mm2px(Vec(336.6+10.5+extra_shift,104.5)), module, NymphesControl::LFO2_SYNC));
-		addChild(createLight<SmallLight<BlueLight>>(mm2px(Vec(339.6+11+extra_shift, 101)), module, NymphesControl::LFO2_SYNC_LIGHT));
-		
-		// addParam(createParam<CKD6>(mm2px(Vec(348.6-3.5,104.5)), module, NymphesControl::MOD_SOURCE));
-		addParam(createParam<LEDButton>(mm2px(Vec(274,61)), module, NymphesControl::MOD_TYPE));
-		addParam(createParam<LEDButton>(mm2px(Vec(274,68)), module, NymphesControl::MOD_TYPE + 1));
-		addParam(createParam<LEDButton>(mm2px(Vec(274,75)), module, NymphesControl::MOD_TYPE + 2));
-		addParam(createParam<LEDButton>(mm2px(Vec(274,82)), module, NymphesControl::MOD_TYPE + 3));
-		addChild(createLight<MediumLight<BlueLight>>(mm2px(Vec(275.5, 62.5)), module, NymphesControl::MOD_SOURCE_LIGHTS));
-		addChild(createLight<MediumLight<BlueLight>>(mm2px(Vec(275.5, 69.5)), module, NymphesControl::MOD_SOURCE_LIGHTS + 1));
-		addChild(createLight<MediumLight<BlueLight>>(mm2px(Vec(275.5, 76.5)), module, NymphesControl::MOD_SOURCE_LIGHTS + 2));
-		addChild(createLight<MediumLight<BlueLight>>(mm2px(Vec(275.5, 83.5)), module, NymphesControl::MOD_SOURCE_LIGHTS + 3));
-
-		addParam(createParam<CKD6>(mm2px(Vec(380.6-3.5-extra_shift,104.5)), module, NymphesControl::SUSTAIN));
-		addChild(createLight<SmallLight<BlueLight>>(mm2px(Vec(383.6-3-extra_shift, 101)), module, NymphesControl::SUSTAIN_LIGHT));
-
-		addParam(createParam<CKD6>(mm2px(Vec(392.6-3.5-extra_shift,104.5)), module, NymphesControl::LEGATO));
-		addChild(createLight<SmallLight<BlueLight>>(mm2px(Vec(395.6-3-extra_shift, 101)), module, NymphesControl::LEGATO_LIGHT));
-
-		addParam(createParam<SonusBigSnapKnob>(mm2px(Vec(329, 75)), module, NymphesControl::PLAYMODE));
-		addChild(createLight<SmallLight<BlueLight>>(mm2px(Vec(350, 82.5)), module, NymphesControl::PLAYMODE_LIGHTS));
-		addChild(createLight<SmallLight<BlueLight>>(mm2px(Vec(355, 82.5)), module, NymphesControl::PLAYMODE_LIGHTS + 1));
-		addChild(createLight<SmallLight<BlueLight>>(mm2px(Vec(360, 82.5)), module, NymphesControl::PLAYMODE_LIGHTS + 2));
-		addChild(createLight<SmallLight<BlueLight>>(mm2px(Vec(365, 82.5)), module, NymphesControl::PLAYMODE_LIGHTS + 3));
-		addChild(createLight<SmallLight<BlueLight>>(mm2px(Vec(370, 82.5)), module, NymphesControl::PLAYMODE_LIGHTS + 4));
-		addChild(createLight<SmallLight<BlueLight>>(mm2px(Vec(375, 82.5)), module, NymphesControl::PLAYMODE_LIGHTS + 5));
-		
-
-                addParam(createParam<CKD6>(mm2px(Vec(9.75, 97.5)), module, NymphesControl::LOAD));
-                addParam(createParam<CKD6>(mm2px(Vec(27.0, 97.5)), module, NymphesControl::SAVE));
-		
+    addParam(createParam<CKD6>(mm2px(Vec(324.6+10.5+extra_shift,104.5)), module, NymphesControl::LFO2_TYPE));
+    addChild(createLight<SmallLight<BlueLight>>(mm2px(Vec(323.1+11+extra_shift, 101)), module, NymphesControl::LFO2_TYPE_LIGHTS));
+    addChild(createLight<SmallLight<BlueLight>>(mm2px(Vec(326.1+11+extra_shift, 101)), module, NymphesControl::LFO2_TYPE_LIGHTS + 1));
+    addChild(createLight<SmallLight<BlueLight>>(mm2px(Vec(329.1+11+extra_shift, 101)), module, NymphesControl::LFO2_TYPE_LIGHTS + 2));
+    addChild(createLight<SmallLight<BlueLight>>(mm2px(Vec(332.1+11+extra_shift, 101)), module, NymphesControl::LFO2_TYPE_LIGHTS + 3));
+    addParam(createParam<CKD6>(mm2px(Vec(336.6+10.5+extra_shift,104.5)), module, NymphesControl::LFO2_SYNC));
+    addChild(createLight<SmallLight<BlueLight>>(mm2px(Vec(339.6+11+extra_shift, 101)), module, NymphesControl::LFO2_SYNC_LIGHT));
+    
+    // addParam(createParam<CKD6>(mm2px(Vec(348.6-3.5,104.5)), module, NymphesControl::MOD_SOURCE));
+    addParam(createParam<LEDButton>(mm2px(Vec(274,61)), module, NymphesControl::MOD_TYPE));
+    addParam(createParam<LEDButton>(mm2px(Vec(274,68)), module, NymphesControl::MOD_TYPE + 1));
+    addParam(createParam<LEDButton>(mm2px(Vec(274,75)), module, NymphesControl::MOD_TYPE + 2));
+    addParam(createParam<LEDButton>(mm2px(Vec(274,82)), module, NymphesControl::MOD_TYPE + 3));
+    addChild(createLight<MediumLight<BlueLight>>(mm2px(Vec(275.5, 62.5)), module, NymphesControl::MOD_SOURCE_LIGHTS));
+    addChild(createLight<MediumLight<BlueLight>>(mm2px(Vec(275.5, 69.5)), module, NymphesControl::MOD_SOURCE_LIGHTS + 1));
+    addChild(createLight<MediumLight<BlueLight>>(mm2px(Vec(275.5, 76.5)), module, NymphesControl::MOD_SOURCE_LIGHTS + 2));
+    addChild(createLight<MediumLight<BlueLight>>(mm2px(Vec(275.5, 83.5)), module, NymphesControl::MOD_SOURCE_LIGHTS + 3));
+    
+    addParam(createParam<CKD6>(mm2px(Vec(380.6-3.5-extra_shift,104.5)), module, NymphesControl::SUSTAIN));
+    addChild(createLight<SmallLight<BlueLight>>(mm2px(Vec(383.6-3-extra_shift, 101)), module, NymphesControl::SUSTAIN_LIGHT));
+    
+    addParam(createParam<CKD6>(mm2px(Vec(392.6-3.5-extra_shift,104.5)), module, NymphesControl::LEGATO));
+    addChild(createLight<SmallLight<BlueLight>>(mm2px(Vec(395.6-3-extra_shift, 101)), module, NymphesControl::LEGATO_LIGHT));
+    
+    addParam(createParam<SonusBigSnapKnob>(mm2px(Vec(329, 75)), module, NymphesControl::PLAYMODE));
+    addChild(createLight<SmallLight<BlueLight>>(mm2px(Vec(350, 82.5)), module, NymphesControl::PLAYMODE_LIGHTS));
+    addChild(createLight<SmallLight<BlueLight>>(mm2px(Vec(355, 82.5)), module, NymphesControl::PLAYMODE_LIGHTS + 1));
+    addChild(createLight<SmallLight<BlueLight>>(mm2px(Vec(360, 82.5)), module, NymphesControl::PLAYMODE_LIGHTS + 2));
+    addChild(createLight<SmallLight<BlueLight>>(mm2px(Vec(365, 82.5)), module, NymphesControl::PLAYMODE_LIGHTS + 3));
+    addChild(createLight<SmallLight<BlueLight>>(mm2px(Vec(370, 82.5)), module, NymphesControl::PLAYMODE_LIGHTS + 4));
+    addChild(createLight<SmallLight<BlueLight>>(mm2px(Vec(375, 82.5)), module, NymphesControl::PLAYMODE_LIGHTS + 5));
+    
+    
+    addParam(createParam<CKD6>(mm2px(Vec(9.75, 106.5)), module, NymphesControl::LOAD));
+    addParam(createParam<CKD6>(mm2px(Vec(27.0, 106.5)), module, NymphesControl::SAVE));
+    
+    
+    addParam(createParam<CKD6>(mm2px(Vec(3.75, 77.5)), module, NymphesControl::PROGRAM_BANK));
+    addParam(createParam<SonusBigSnapKnob>(mm2px(Vec(14, 77.5)), module, NymphesControl::PROGRAM_KNOB));
+    addParam(createParam<CKD6>(mm2px(Vec(33.0, 77.5)), module, NymphesControl::PROGRAM_SEND));
+    addChild(createLight<SmallLight<RedLight>>(mm2px(Vec(4.5, 74.5)), module, NymphesControl::PC_BANK_LIGHTS));
+    addChild(createLight<SmallLight<RedLight>>(mm2px(Vec(10.5, 74.5)), module, NymphesControl::PC_BANK_LIGHTS+1));
+    addInput(createInputCentered<PJ301MPort>(mm2px(Vec(8.5, 94)), module, NymphesControl::CV_PC));
+    addInput(createInputCentered<PJ301MPort>(mm2px(Vec(38, 94)), module, NymphesControl::CV_PC_SEND));
+    
+    
     // 		70  // 0-3 lfo1 type
     // 		71  // 0-1 lfo1 sync
     // 		72  // 0-3 lfo2 type
@@ -975,69 +1149,79 @@ struct NymphesControlWidget : ModuleWidget {
     // 		75  // 0-1 sustain pedal
     // 		76  // 0-1 legato
     // 		77  // 0-5 playmode
-
-
-		//VALUE DISPLAY
-		VerySmallDisplayWidget *value_display[74];
-		for (int i = 0; i<14; i++) {
-		  value_display[i] = new VerySmallDisplayWidget();
-		  value_display[i]->box.pos = mm2px(Vec(slider_x[i]-0.9-4.588-120, 30.73149 - 3.516).plus(Vec(-1.2, 26.9)));
-		  value_display[i]->box.size = Vec(15.5, 7.7777);
-		  if (module) {
-		    value_display[i]->value = &module->current_values[i];
-		  }
-		  addChild(value_display[i]); 
-
-		  value_display[i+14] = new VerySmallDisplayWidget();
-		  value_display[i+14]->box.pos = mm2px(Vec(slider_x[i]-0.9-4.588-120, 93.18849).plus(Vec(-1.2, -1.9)));
-		  value_display[i+14]->box.size = Vec(15.5, 7.7777);
-		  if (module) {
-		    value_display[i+14]->value = &module->current_values[i+14];
-		  }
-		  addChild(value_display[i+14]); 		  
+    
+    //VALUE DISPLAY PROGRAM CHANGE
+    DisplayWidget *value_display_pc;
+    value_display_pc = new DisplayWidget();
+    value_display_pc->box.pos = mm2px(Vec(19, 84.5));
+    value_display_pc->box.size = Vec(24.357, 12.2221);
+    if (module) {
+      value_display_pc->bank = &module->current_bank;
+      value_display_pc->value = &module->current_program;
+    }
+    addChild(value_display_pc); 
+      
+    //VALUE DISPLAY
+    VerySmallDisplayWidget *value_display[74];
+    for (int i = 0; i<14; i++) {
+      value_display[i] = new VerySmallDisplayWidget();
+      value_display[i]->box.pos = mm2px(Vec(slider_x[i]-0.9-4.588-120, 30.73149 - 3.516).plus(Vec(-1.2, 26.9)));
+      value_display[i]->box.size = Vec(15.5, 7.7777);
+      if (module) {
+	value_display[i]->value = &module->current_values[i];
+      }
+    addChild(value_display[i]); 
+    
+    value_display[i+14] = new VerySmallDisplayWidget();
+    value_display[i+14]->box.pos = mm2px(Vec(slider_x[i]-0.9-4.588-120, 93.18849).plus(Vec(-1.2, -1.9)));
+    value_display[i+14]->box.size = Vec(15.5, 7.7777);
+    if (module) {
+      value_display[i+14]->value = &module->current_values[i+14];
+    }
+    addChild(value_display[i+14]); 		  
+  }
+  
+  for (int i = 28; i<42; i++) {
+    value_display[i] = new VerySmallDisplayWidget();
+    value_display[i]->box.pos = mm2px(Vec(3.709+slider_x[i-28]-0.9-4.588, 30.73149 - 3.516).plus(Vec(-1.2, 26.9)));
+    value_display[i]->box.size = Vec(15.5, 7.7777);
+    if (module) {
+      value_display[i]->value = &module->mod_display_values[i-28];
+    }
+    addChild(value_display[i]); 
+    
+    value_display[i+14] = new VerySmallDisplayWidget();
+    value_display[i+14]->box.pos = mm2px(Vec(3.709+slider_x[i-28]-0.9-4.588, 93.18849).plus(Vec(-1.2, -1.9)));
+    value_display[i+14]->box.size = Vec(15.5, 7.7777);
+    if (module) {
+      // value_display[i+14]->value = &module->current_values[i+14];
+      value_display[i+14]->value = &module->mod_display_values[i-14];
+    }
+    addChild(value_display[i+14]); 		  
+  }
+  
+  
+  for (int i = 56; i<74; i++) {
+    value_display[i] = new VerySmallDisplayWidget();
+    value_display[i]->box.pos = mm2px(Vec(85.351+6*i-0.9-120, 30.73149 - 3.516).plus(Vec(-1.2, 26.9)));
+    value_display[i]->box.size = Vec(15.5, 7.7777);
+    if (module) {
+      if( i < 60 ) {
+	value_display[i]->value = &module->current_values[i-28];
+      } else if ( i >= 64 && i < 68 ) {
+	value_display[i]->value = &module->current_values[i-32];
+      } else if ( i > 71) {
+	value_display[i]->value = &module->current_values[i-36];
+      } else if ( i >= 60 && i < 64 ) {
+	value_display[i]->value = &module->mod_display_values[i-32];
+      } else {
+	value_display[i]->value = &module->mod_display_values[i-36];
+      }
+    }
+    addChild(value_display[i]); 
 		}
-		
-		for (int i = 28; i<42; i++) {
-		  value_display[i] = new VerySmallDisplayWidget();
-		  value_display[i]->box.pos = mm2px(Vec(3.709+slider_x[i-28]-0.9-4.588, 30.73149 - 3.516).plus(Vec(-1.2, 26.9)));
-		  value_display[i]->box.size = Vec(15.5, 7.7777);
-		  if (module) {
-		    value_display[i]->value = &module->mod_display_values[i-28];
-		  }
-		  addChild(value_display[i]); 
-
-		  value_display[i+14] = new VerySmallDisplayWidget();
-		  value_display[i+14]->box.pos = mm2px(Vec(3.709+slider_x[i-28]-0.9-4.588, 93.18849).plus(Vec(-1.2, -1.9)));
-		  value_display[i+14]->box.size = Vec(15.5, 7.7777);
-		  if (module) {
-		    // value_display[i+14]->value = &module->current_values[i+14];
-		    value_display[i+14]->value = &module->mod_display_values[i-14];
-		  }
-		  addChild(value_display[i+14]); 		  
-		}
-
-		
-		for (int i = 56; i<74; i++) {
-		  value_display[i] = new VerySmallDisplayWidget();
-		  value_display[i]->box.pos = mm2px(Vec(85.351+6*i-0.9-120, 30.73149 - 3.516).plus(Vec(-1.2, 26.9)));
-		  value_display[i]->box.size = Vec(15.5, 7.7777);
-		  if (module) {
-		    if( i < 60 ) {
-		      value_display[i]->value = &module->current_values[i-28];
-		    } else if ( i >= 64 && i < 68 ) {
-		      value_display[i]->value = &module->current_values[i-32];
-		    } else if ( i > 71) {
-		      value_display[i]->value = &module->current_values[i-36];
-		    } else if ( i >= 60 && i < 64 ) {
-		      value_display[i]->value = &module->mod_display_values[i-32];
-		    } else {
-		      value_display[i]->value = &module->mod_display_values[i-36];
-		    }
-		  }
-		  addChild(value_display[i]); 
-		}
-		
-	}
+  
+  }
   
 };
 
