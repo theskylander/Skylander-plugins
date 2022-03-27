@@ -590,15 +590,15 @@ struct NymphesControl : Module {
 		if (factory_last != factory) {
 		  factory_last = factory;
 		  if(factory) {
-		    midiOutput.setValue(1, 0);
-		    midiOutput.setValue(0, 32);
+		    midiOutput.setValue(0, 0);
+		    midiOutput.setValue(1, 32);
 		  } else {
 		    midiOutput.setValue(0, 0);
 		    midiOutput.setValue(0, 32);
 		  }
 		}
 		
-		if (values_in[0] == 1 && values_in[32] == 0) {
+		if (values_in[0] == 0 && values_in[32] == 1) {
 		  factory = true;
 		  values_in[0] = -10;
 		  values_in[32] = -10;
