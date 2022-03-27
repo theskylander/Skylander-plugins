@@ -951,7 +951,8 @@ struct VerySmallDisplayWidget : TransparentWidget {
     nvgFillColor(args.vg, nvgTransRGBA(textColor, 16));
     nvgText(args.vg, textPos.x, textPos.y, "\\\\\\", NULL);
 
-    textColor = nvgRGB(0xf0, 0x00, 0x00);
+    // textColor = nvgRGB(0xf0, 0x00, 0x00);
+    textColor = nvgRGB(0xff, 0xd5, 0xd5);
     nvgFillColor(args.vg, textColor);
     nvgText(args.vg, textPos.x, textPos.y, to_display.str().c_str(), NULL);
   }
@@ -1003,7 +1004,8 @@ struct DisplayWidget : TransparentWidget {
     nvgFillColor(args.vg, nvgTransRGBA(textColor, 16));
     nvgText(args.vg, textPos.x, textPos.y, "\\\\\\", NULL);
 
-    textColor = nvgRGB(0xf0, 0x00, 0x00);
+    // textColor = nvgRGB(0xf0, 0x00, 0x00);
+    textColor = nvgRGB(0xff, 0xd5, 0xd5);
     nvgFillColor(args.vg, textColor);
     nvgText(args.vg, textPos.x, textPos.y, to_display.str().c_str(), NULL);
   }
