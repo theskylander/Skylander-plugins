@@ -152,15 +152,15 @@ struct NymphesControl : Module {
 		        configParam(NymphesControl::CONTROLLERS+i, 0, 128, 9*(i%14), "");
 		}
 		for (int i = 0; i < 38; i++) {
-		  valueFilters[i].setTau(1 / 500.f); //x
+		  valueFilters[i].setTau(1 / 10000.f); //x
 		}
 		for (int i = 0; i < 4; i++) {
 			for (int j = 0; j < 36; j++) {
-			  mod_valueFilters[i][j].setTau(1 / 500.f); //x controllers and cc_inputs: (28-55, 64-67)
+			  mod_valueFilters[i][j].setTau(1 / 10000.f); //x controllers and cc_inputs: (28-55, 64-67)
 			}
 		}
 		for (int i = 0; i < 8; i++) {
-		  button_valueFilters[i].setTau(1 / 500.f); //x
+		  button_valueFilters[i].setTau(1 / 10000.f); //x
 		}
 		for (int i = 0; i < 4; i++) {
 		  configParam(NymphesControl::MOD_TYPE+i, 0, 1, 0, "");
@@ -227,12 +227,12 @@ struct NymphesControl : Module {
 					  64, // 0-1 sustain pedal 75
 					  68, // 0-1 legato 76
 					  17, // 0-5 playmode 77
-					  36,37,39,40,41,45,46,47,52,53,54,55,58,59, // mod shift 28-41
-					  31,32,33,34,35,42,43,44,48,49,50,51,56,57, // mod normal 42-55
+					  36,37,39,40,41,45,46,47,48,49,50,51,58,59, // mod shift 28-41
+					  31,32,33,34,35,42,43,44,52,53,54,55,56,57, // mod normal 42-55
 					  86,87,88,89, // reverb mod 78-81
 					  60,61,62,63, // lfo2 mod 64-67
-					  12,5,15,16,14,81,4,8,73,84,85,72,20,21, // shift 0-13
-					  70,9,10,11,13,74,71,3,79,80,82,83,18,19, // normal 14-27
+					  12,5,15,16,14,81,4,8,79,80,82,83,20,21, // shift 0-13
+					  70,9,10,11,13,74,71,3,73,84,85,72,18,19, // normal 14-27
 					  75,76,77,78, // reverb 56-59
 					  24,25,26,27, // lfo2 60-63
 					  1, // mod wheel 68
@@ -590,15 +590,15 @@ struct NymphesControl : Module {
 		if (factory_last != factory) {
 		  factory_last = factory;
 		  if(factory) {
-		    midiOutput.setValue(0, 0);
-		    midiOutput.setValue(1, 32);
+		    midiOutput.setValue(1, 0);
+		    midiOutput.setValue(0, 32);
 		  } else {
 		    midiOutput.setValue(0, 0);
 		    midiOutput.setValue(0, 32);
 		  }
 		}
 		
-		if (values_in[0] == 0 && values_in[32] == 1) {
+		if (values_in[0] == 1 && values_in[32] == 0) {
 		  factory = true;
 		  values_in[0] = -10;
 		  values_in[32] = -10;
