@@ -60,25 +60,30 @@ struct StateDisplay : TransparentWidget {
 	
 	SkylanderModule *module;
 	int frame = 0;
-	std::shared_ptr<Font> font;
+        std::string _fontPath;
 
-	StateDisplay() {
-		font = APP->window->loadFont(asset::plugin(pluginInstance, "res/EurostileBold.ttf"));
-	}
+        StateDisplay() : 
+	  _fontPath(asset::plugin(pluginInstance, "res/EurostileBold.ttf"))
+  {
+  }
 
 	void draw(const DrawArgs& args) override {
 	
-		Vec pos = Vec(0, 15);
+	  std::shared_ptr<Font> font = APP->window->loadFont(_fontPath);
+	  if(font) {
+	    Vec pos = Vec(0, 15);
 
-		nvgFontSize(args.vg, 16);
-		nvgFontFaceId(args.vg, font->handle);
-		nvgTextLetterSpacing(args.vg, -1);
+	    nvgFontSize(args.vg, 16);
+	    nvgFontFaceId(args.vg, font->handle);
+	    nvgTextLetterSpacing(args.vg, -1);
+	    
+	    nvgFillColor(args.vg, nvgRGBA(255, 0, 0, 0xff));
+	    
+	    char text[128];
+	    snprintf(text, sizeof(text), "%s", module->paramState.c_str());
+	    nvgText(args.vg, pos.x + 10, pos.y + 5, text, NULL);
 
-		nvgFillColor(args.vg, nvgRGBA(255, 0, 0, 0xff));
-	
-		char text[128];
-		snprintf(text, sizeof(text), "%s", module->paramState.c_str());
-		nvgText(args.vg, pos.x + 10, pos.y + 5, text, NULL);			
+	  }
 
 	}
 	

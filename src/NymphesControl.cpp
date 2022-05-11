@@ -910,51 +910,55 @@ struct NymphesControl : Module {
 ////////////////////////////////////
 struct VerySmallDisplayWidget : TransparentWidget {
   int *value = NULL;
-  std::shared_ptr<Font> font;
+  std::string _fontPath;
 
-  VerySmallDisplayWidget() {
-    font = APP->window->loadFont(asset::plugin(pluginInstance, "res/Segment7Standard.ttf"));
+  VerySmallDisplayWidget() :
+    _fontPath(asset::plugin(pluginInstance, "res/Segment7Standard.ttf"))
+  {
   };
 
   void draw(const DrawArgs& args) override
   {
-    if (!value) {
-      return;
+    std::shared_ptr<Font> font = APP->window->loadFont(_fontPath);
+    if(font) {
+      if (!value) {
+	return;
+      }
+      // Background
+      //NVGcolor backgroundColor = nvgRGB(0x20, 0x20, 0x20);
+      NVGcolor backgroundColor = nvgRGB(0x20, 0x10, 0x10);
+      NVGcolor borderColor = nvgRGB(0x10, 0x10, 0x10);
+      nvgBeginPath(args.vg);
+      nvgRoundedRect(args.vg, 0.0, 0.0, box.size.x, box.size.y, 2.0);
+      nvgFillColor(args.vg, backgroundColor);
+      nvgFill(args.vg);
+      nvgStrokeWidth(args.vg, 1.0);
+      nvgStrokeColor(args.vg, borderColor);
+      nvgStroke(args.vg);    
+      // text 
+      nvgFontSize(args.vg, 7);
+      nvgFontFaceId(args.vg, font->handle);
+      // nvgTextLetterSpacing(args.vg, 1.1111);
+      nvgTextLetterSpacing(args.vg, 1);
+
+      std::stringstream to_display;   
+      to_display << std::setw(3) << *value;
+      
+      Vec textPos = Vec(0.5f, 6.33333f); 
+      
+      NVGcolor textColor = nvgRGB(0xdf, 0xd2, 0x2c);
+      nvgFillColor(args.vg, nvgTransRGBA(textColor, 16));
+      nvgText(args.vg, textPos.x, textPos.y, "~~~", NULL);
+      
+      textColor = nvgRGB(0xda, 0xe9, 0x29);
+      nvgFillColor(args.vg, nvgTransRGBA(textColor, 16));
+      nvgText(args.vg, textPos.x, textPos.y, "\\\\\\", NULL);
+      
+      // textColor = nvgRGB(0xf0, 0x00, 0x00);
+      textColor = nvgRGB(0xff, 0xd5, 0xd5);
+      nvgFillColor(args.vg, textColor);
+      nvgText(args.vg, textPos.x, textPos.y, to_display.str().c_str(), NULL);
     }
-    // Background
-    //NVGcolor backgroundColor = nvgRGB(0x20, 0x20, 0x20);
-    NVGcolor backgroundColor = nvgRGB(0x20, 0x10, 0x10);
-    NVGcolor borderColor = nvgRGB(0x10, 0x10, 0x10);
-    nvgBeginPath(args.vg);
-    nvgRoundedRect(args.vg, 0.0, 0.0, box.size.x, box.size.y, 2.0);
-    nvgFillColor(args.vg, backgroundColor);
-    nvgFill(args.vg);
-    nvgStrokeWidth(args.vg, 1.0);
-    nvgStrokeColor(args.vg, borderColor);
-    nvgStroke(args.vg);    
-    // text 
-    nvgFontSize(args.vg, 7);
-    nvgFontFaceId(args.vg, font->handle);
-    // nvgTextLetterSpacing(args.vg, 1.1111);
-    nvgTextLetterSpacing(args.vg, 1);
-
-    std::stringstream to_display;   
-    to_display << std::setw(3) << *value;
-
-    Vec textPos = Vec(0.5f, 6.33333f); 
-
-    NVGcolor textColor = nvgRGB(0xdf, 0xd2, 0x2c);
-    nvgFillColor(args.vg, nvgTransRGBA(textColor, 16));
-    nvgText(args.vg, textPos.x, textPos.y, "~~~", NULL);
-
-    textColor = nvgRGB(0xda, 0xe9, 0x29);
-    nvgFillColor(args.vg, nvgTransRGBA(textColor, 16));
-    nvgText(args.vg, textPos.x, textPos.y, "\\\\\\", NULL);
-
-    // textColor = nvgRGB(0xf0, 0x00, 0x00);
-    textColor = nvgRGB(0xff, 0xd5, 0xd5);
-    nvgFillColor(args.vg, textColor);
-    nvgText(args.vg, textPos.x, textPos.y, to_display.str().c_str(), NULL);
   }
 };
 ////////////////////////////////////
@@ -963,51 +967,56 @@ struct VerySmallDisplayWidget : TransparentWidget {
 struct DisplayWidget : TransparentWidget {
   int *value = NULL;
   char *bank = NULL;
-  std::shared_ptr<Font> font;
+  std::string _fontPath;
 
-  DisplayWidget() {
-    font = APP->window->loadFont(asset::plugin(pluginInstance, "res/Segment7Standard.ttf"));
+  DisplayWidget() :
+  _fontPath(asset::plugin(pluginInstance, "res/Segment7Standard.ttf"))
+  {
   };
 
   void draw(const DrawArgs& args) override
   {
-    if (!value) {
-      return;
+    std::shared_ptr<Font> font = APP->window->loadFont(_fontPath);
+    if(font) {
+    
+      if (!value) {
+	return;
+      }
+      // Background
+      //NVGcolor backgroundColor = nvgRGB(0x20, 0x20, 0x20);
+      NVGcolor backgroundColor = nvgRGB(0x20, 0x10, 0x10);
+      NVGcolor borderColor = nvgRGB(0x10, 0x10, 0x10);
+      nvgBeginPath(args.vg);
+      nvgRoundedRect(args.vg, 0.0, 0.0, box.size.x, box.size.y, 2.0);
+      nvgFillColor(args.vg, backgroundColor);
+      nvgFill(args.vg);
+      nvgStrokeWidth(args.vg, 1.0);
+      nvgStrokeColor(args.vg, borderColor);
+      nvgStroke(args.vg);    
+      // text 
+      nvgFontSize(args.vg, 11);
+      nvgFontFaceId(args.vg, font->handle);
+      // nvgTextLetterSpacing(args.vg, 1.1111);
+      nvgTextLetterSpacing(args.vg, 1);
+      
+      std::stringstream to_display;   
+      to_display << *bank << std::setw(2) << *value;
+      
+      Vec textPos = Vec(0.7857f, 9.99523f); 
+      
+      NVGcolor textColor = nvgRGB(0xdf, 0xd2, 0x2c);
+      nvgFillColor(args.vg, nvgTransRGBA(textColor, 16));
+      nvgText(args.vg, textPos.x, textPos.y, "~~~", NULL);
+      
+      textColor = nvgRGB(0xda, 0xe9, 0x29);
+      nvgFillColor(args.vg, nvgTransRGBA(textColor, 16));
+      nvgText(args.vg, textPos.x, textPos.y, "\\\\\\", NULL);
+      
+      // textColor = nvgRGB(0xf0, 0x00, 0x00);
+      textColor = nvgRGB(0xff, 0xd5, 0xd5);
+      nvgFillColor(args.vg, textColor);
+      nvgText(args.vg, textPos.x, textPos.y, to_display.str().c_str(), NULL);
     }
-    // Background
-    //NVGcolor backgroundColor = nvgRGB(0x20, 0x20, 0x20);
-    NVGcolor backgroundColor = nvgRGB(0x20, 0x10, 0x10);
-    NVGcolor borderColor = nvgRGB(0x10, 0x10, 0x10);
-    nvgBeginPath(args.vg);
-    nvgRoundedRect(args.vg, 0.0, 0.0, box.size.x, box.size.y, 2.0);
-    nvgFillColor(args.vg, backgroundColor);
-    nvgFill(args.vg);
-    nvgStrokeWidth(args.vg, 1.0);
-    nvgStrokeColor(args.vg, borderColor);
-    nvgStroke(args.vg);    
-    // text 
-    nvgFontSize(args.vg, 11);
-    nvgFontFaceId(args.vg, font->handle);
-    // nvgTextLetterSpacing(args.vg, 1.1111);
-    nvgTextLetterSpacing(args.vg, 1);
-
-    std::stringstream to_display;   
-    to_display << *bank << std::setw(2) << *value;
-
-    Vec textPos = Vec(0.7857f, 9.99523f); 
-
-    NVGcolor textColor = nvgRGB(0xdf, 0xd2, 0x2c);
-    nvgFillColor(args.vg, nvgTransRGBA(textColor, 16));
-    nvgText(args.vg, textPos.x, textPos.y, "~~~", NULL);
-
-    textColor = nvgRGB(0xda, 0xe9, 0x29);
-    nvgFillColor(args.vg, nvgTransRGBA(textColor, 16));
-    nvgText(args.vg, textPos.x, textPos.y, "\\\\\\", NULL);
-
-    // textColor = nvgRGB(0xf0, 0x00, 0x00);
-    textColor = nvgRGB(0xff, 0xd5, 0xd5);
-    nvgFillColor(args.vg, textColor);
-    nvgText(args.vg, textPos.x, textPos.y, to_display.str().c_str(), NULL);
   }
 };
 ////////////////////////////////////
